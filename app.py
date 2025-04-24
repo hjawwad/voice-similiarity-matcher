@@ -25,7 +25,7 @@ def analyze_voice_similarity(audio_file1, audio_file2, progress=gr.Progress()):
         progress(0.4, desc="Processing second audio file...")
         wav2 = preprocess_wav(audio_file2)
     except Exception as e:
-        return f"Error processing audio files: {str(e)}"
+        return None, None, None, None, False, f"Error processing audio files: {str(e)}"
     
     # Extract speaker embeddings
     progress(0.6, desc="Extracting voice embeddings...")
@@ -47,13 +47,15 @@ def analyze_voice_similarity(audio_file1, audio_file2, progress=gr.Progress()):
     
     progress(1.0, desc="Analysis complete!")
     
-    # Return the results for display in components
-    return {
-        "similarity_score": f"{similarity:.4f}",
-        "conclusion": result,
-        "memory_usage": f"{memory_usage:.2f} MB",
-        "execution_time": f"{execution_time:.4f} seconds"
-    }
+    # Return the formatted results and show the results container
+    return (
+        f"{similarity:.4f}",
+        result,
+        f"{memory_usage:.2f} MB",
+        f"{execution_time:.4f} seconds",
+        True,
+        ""  # No error
+    )
 
 # Create Gradio interface
 with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as demo:
@@ -68,41 +70,38 @@ with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as dem
     
     analyze_button = gr.Button("Analyze Voice Similarity", variant="primary")
     
-    # Results display section using nicer components
-    with gr.Box(visible=False) as results_box:
-        with gr.Group():
-            gr.Markdown("## Analysis Results", elem_id="results-heading")
-            with gr.Row():
-                with gr.Column():
-                    similarity_display = gr.Textbox(label="Similarity Score", elem_id="similarity-score")
-                with gr.Column():
-                    conclusion_display = gr.Textbox(label="Conclusion", elem_id="conclusion")
-            
-            gr.Markdown("### Performance Metrics", elem_id="metrics-heading")
-            with gr.Row():
-                with gr.Column():
-                    memory_display = gr.Textbox(label="Memory Usage", elem_id="memory-usage")
-                with gr.Column():
-                    time_display = gr.Textbox(label="Execution Time", elem_id="execution-time")
+    # Error message display
+    error_message = gr.Markdown(visible=False)
+    
+    # Results display section using available components
+    with gr.Column(visible=False) as results_container:
+        gr.Markdown("## Analysis Results")
+        
+        with gr.Row():
+            with gr.Column():
+                similarity_display = gr.Textbox(label="Similarity Score")
+            with gr.Column():
+                conclusion_display = gr.Textbox(label="Conclusion")
+        
+        gr.Markdown("### Performance Metrics")
+        with gr.Row():
+            with gr.Column():
+                memory_display = gr.Textbox(label="Memory Usage")
+            with gr.Column():
+                time_display = gr.Textbox(label="Execution Time")
     
     # Handler for the analyze button
-    def update_ui(results):
-        return {
-            results_box: gr.update(visible=True),
-            similarity_display: results["similarity_score"],
-            conclusion_display: results["conclusion"],
-            memory_display: results["memory_usage"],
-            time_display: results["execution_time"]
-        }
-    
     analyze_button.click(
         fn=analyze_voice_similarity,
         inputs=[audio_input1, audio_input2],
-        outputs=None
-    ).then(
-        fn=update_ui,
-        inputs=analyze_voice_similarity.bind(audio_input1, audio_input2),
-        outputs=[results_box, similarity_display, conclusion_display, memory_display, time_display]
+        outputs=[
+            similarity_display,
+            conclusion_display,
+            memory_display,
+            time_display,
+            results_container,
+            error_message
+        ]
     )
     
     gr.Markdown("""
@@ -117,14 +116,6 @@ with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as dem
     - Memory usage shows how much RAM is being used
     - Execution time measures how long the comparison takes
     """)
-
-# Add custom CSS for better styling
-demo.css = """
-#results-heading, #metrics-heading {
-    margin-top: 10px;
-    margin-bottom: 10px;
-}
-"""
 
 # Launch the app
 if __name__ == "__main__":
