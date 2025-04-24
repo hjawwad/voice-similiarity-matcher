@@ -12,6 +12,10 @@ def analyze_voice_similarity(audio_file1, audio_file2, progress=gr.Progress()):
     # Update progress for visual feedback
     progress(0, desc="Starting analysis...")
     
+    # Validate inputs
+    if not audio_file1 or not audio_file2:
+        return "", "", "", "", "Please upload both audio files"
+    
     start_time = time.time()  # Record start time
     
     # Get current process information
@@ -25,7 +29,7 @@ def analyze_voice_similarity(audio_file1, audio_file2, progress=gr.Progress()):
         progress(0.4, desc="Processing second audio file...")
         wav2 = preprocess_wav(audio_file2)
     except Exception as e:
-        return None, None, None, None, False, f"Error processing audio files: {str(e)}"
+        return "", "", "", "", f"Error processing audio files: {str(e)}"
     
     # Extract speaker embeddings
     progress(0.6, desc="Extracting voice embeddings...")
@@ -47,13 +51,40 @@ def analyze_voice_similarity(audio_file1, audio_file2, progress=gr.Progress()):
     
     progress(1.0, desc="Analysis complete!")
     
-    # Return the formatted results and show the results container
+    # Format the HTML output for the results display
+    html_output = f"""
+    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h2 style="color: #495057; margin-bottom: 15px;">Analysis Results</h2>
+        <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
+            <div style="flex: 1; padding-right: 10px;">
+                <h4 style="color: #6c757d; margin-bottom: 5px;">Similarity Score</h4>
+                <p style="font-size: 18px; font-weight: bold; color: #212529;">{similarity:.4f}</p>
+            </div>
+            <div style="flex: 1; padding-left: 10px;">
+                <h4 style="color: #6c757d; margin-bottom: 5px;">Conclusion</h4>
+                <p style="font-size: 18px; font-weight: bold; color: {'#28a745' if similarity >= 0.80 else '#dc3545'};">{result}</p>
+            </div>
+        </div>
+        <h3 style="color: #495057; margin-bottom: 15px;">Performance Metrics</h3>
+        <div style="display: flex; justify-content: space-between;">
+            <div style="flex: 1; padding-right: 10px;">
+                <h4 style="color: #6c757d; margin-bottom: 5px;">Memory Usage</h4>
+                <p style="font-size: 16px; color: #212529;">{memory_usage:.2f} MB</p>
+            </div>
+            <div style="flex: 1; padding-left: 10px;">
+                <h4 style="color: #6c757d; margin-bottom: 5px;">Execution Time</h4>
+                <p style="font-size: 16px; color: #212529;">{execution_time:.4f} seconds</p>
+            </div>
+        </div>
+    </div>
+    """
+    
+    # Return the individual values and the HTML display
     return (
         f"{similarity:.4f}",
-        result,
-        f"{memory_usage:.2f} MB",
+        result, 
+        f"{memory_usage:.2f} MB", 
         f"{execution_time:.4f} seconds",
-        True,
         ""  # No error
     )
 
@@ -71,24 +102,21 @@ with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as dem
     analyze_button = gr.Button("Analyze Voice Similarity", variant="primary")
     
     # Error message display
-    error_message = gr.Markdown(visible=False)
+    error_message = gr.Markdown(visible=True)
     
-    # Results display section using available components
-    with gr.Column(visible=False) as results_container:
-        gr.Markdown("## Analysis Results")
-        
+    # Results display section
+    with gr.Group(visible=True):
+        gr.Markdown("## Results will appear here after analysis")
         with gr.Row():
             with gr.Column():
-                similarity_display = gr.Textbox(label="Similarity Score")
+                similarity_display = gr.Textbox(label="Similarity Score", value="")
             with gr.Column():
-                conclusion_display = gr.Textbox(label="Conclusion")
-        
-        gr.Markdown("### Performance Metrics")
+                conclusion_display = gr.Textbox(label="Conclusion", value="")
         with gr.Row():
             with gr.Column():
-                memory_display = gr.Textbox(label="Memory Usage")
+                memory_display = gr.Textbox(label="Memory Usage", value="")
             with gr.Column():
-                time_display = gr.Textbox(label="Execution Time")
+                time_display = gr.Textbox(label="Execution Time", value="")
     
     # Handler for the analyze button
     analyze_button.click(
@@ -99,7 +127,6 @@ with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as dem
             conclusion_display,
             memory_display,
             time_display,
-            results_container,
             error_message
         ]
     )
