@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Matching API Test Interface</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-section {
+            margin-bottom: 30px;
+        }
+        .file-input {
+            margin: 10px 0;
+            padding: 10px;
+            border: 2px dashed #ddd;
+            border-radius: 5px;
+            text-align: center;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            text-align: center;
+            color: #007bff;
+            font-style: italic;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .metric-label {
+            font-weight: bold;
+        }
+        .metric-value {
+            color: #007bff;
+        }
+        .recording-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+        }
+        .recording-controls {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        .record-btn {
+            background-color: #dc3545;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            width: auto;
+            margin: 0;
+        }
+        .record-btn:hover {
+            background-color: #c82333;
+        }
+        .record-btn.recording {
+            background-color: #28a745;
+            animation: pulse 1s infinite;
+        }
+        .record-btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+        .audio-preview {
+            margin: 10px 0;
+            display: none;
+        }
+        .audio-preview audio {
+            width: 100%;
+            margin: 5px 0;
+        }
+        .recording-status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .recording-status.recording {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            display: block;
+        }
+        .recording-status.stopped {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            display: block;
+        }
+        .clear-btn {
+            background-color: #6c757d;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            width: auto;
+            margin: 0;
+        }
+        .clear-btn:hover {
+            background-color: #5a6268;
+        }
+        .recording-timer {
+            font-weight: bold;
+            color: #dc3545;
+            margin-left: 10px;
+        }
+        .waveform {
+            margin: 10px 0;
+            height: 60px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #e9ecef;
+        }
+        .waveform-bar {
+            width: 3px;
+            background-color: #007bff;
+            margin: 0 1px;
+            border-radius: 2px;
+            transition: height 0.1s ease;
+        }
+        .waveform-placeholder {
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Voice Matching API Test</h1>
+        
+        <div class="recording-section">
+            <h3>🎙️ Record Voice Samples</h3>
+            <p>Record two voice samples directly in your browser for comparison:</p>
+            
+            <div class="recording-controls">
+                <button id="recordBtn1" class="record-btn" onclick="startRecording(1)">Record Voice 1</button>
+                <button id="stopBtn1" class="record-btn" onclick="stopRecording(1)" disabled>Stop Recording</button>
+                <button id="clearBtn1" class="clear-btn" onclick="clearRecording(1)" disabled>Clear</button>
+                <span id="timer1" class="recording-timer"></span>
+            </div>
+            <div id="status1" class="recording-status"></div>
+            <div id="waveform1" class="waveform">
+                <div class="waveform-placeholder">Waveform will appear after recording</div>
+            </div>
+            <div id="preview1" class="audio-preview"></div>
+            
+            <div class="recording-controls">
+                <button id="recordBtn2" class="record-btn" onclick="startRecording(2)">Record Voice 2</button>
+                <button id="stopBtn2" class="record-btn" onclick="stopRecording(2)" disabled>Stop Recording</button>
+                <button id="clearBtn2" class="clear-btn" onclick="clearRecording(2)" disabled>Clear</button>
+                <span id="timer2" class="recording-timer"></span>
+            </div>
+            <div id="status2" class="recording-status"></div>
+            <div id="waveform2" class="waveform">
+                <div class="waveform-placeholder">Waveform will appear after recording</div>
+            </div>
+            <div id="preview2" class="audio-preview"></div>
+        </div>
+        
+        
+        <button id="compareBtn" onclick="compareVoices()">Compare Voices</button>
+        
+        <div id="result" class="result">
+            <div id="resultContent"></div>
+        </div>
+    </div>
+
+    <script>
+        // Recording state management
+        let mediaRecorders = {};
+        let audioChunks = {};
+        let recordingTimers = {};
+        let recordedAudio = {};
+        
+        // Initialize recording functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if browser supports MediaRecorder
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                alert('Your browser does not support audio recording. Please use a modern browser like Chrome, Firefox, or Safari.');
+            }
+        });
+        
+        async function startRecording(voiceNumber) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                // Try to use WAV format, fallback to default if not supported
+                let options = { mimeType: 'audio/wav' };
+                if (!MediaRecorder.isTypeSupported('audio/wav')) {
+                    options = { mimeType: 'audio/webm' };
+                }
+                const mediaRecorder = new MediaRecorder(stream, options);
+                
+                mediaRecorders[voiceNumber] = mediaRecorder;
+                audioChunks[voiceNumber] = [];
+                
+                mediaRecorder.ondataavailable = function(event) {
+                    audioChunks[voiceNumber].push(event.data);
+                };
+                
+                mediaRecorder.onstop = function() {
+                    // Get the actual MIME type used by the recorder
+                    const mimeType = mediaRecorder.mimeType || 'audio/webm';
+                    const audioBlob = new Blob(audioChunks[voiceNumber], { type: mimeType });
+                    
+                    // Determine file extension based on MIME type
+                    const extension = mimeType.includes('wav') ? 'wav' : 'webm';
+                    const audioFile = new File([audioBlob], `recorded_voice_${voiceNumber}.${extension}`, { type: mimeType });
+                    recordedAudio[voiceNumber] = audioFile;
+                    
+                    // Create audio preview
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const previewDiv = document.getElementById(`preview${voiceNumber}`);
+                    previewDiv.innerHTML = `<audio controls><source src="${audioUrl}" type="${mimeType}"></audio>`;
+                    previewDiv.style.display = 'block';
+                    
+                    // Generate waveform
+                    generateWaveform(audioBlob, voiceNumber);
+                    
+                    // Update UI
+                    updateRecordingUI(voiceNumber, 'stopped');
+                    
+                    // Stop all tracks to release microphone
+                    stream.getTracks().forEach(track => track.stop());
+                };
+                
+                mediaRecorder.start();
+                
+                // Start timer
+                startTimer(voiceNumber);
+                
+                // Update UI
+                updateRecordingUI(voiceNumber, 'recording');
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                alert('Error accessing microphone. Please check your permissions and try again.');
+            }
+        }
+        
+        function stopRecording(voiceNumber) {
+            if (mediaRecorders[voiceNumber] && mediaRecorders[voiceNumber].state === 'recording') {
+                mediaRecorders[voiceNumber].stop();
+                stopTimer(voiceNumber);
+            }
+        }
+        
+        function clearRecording(voiceNumber) {
+            // Clear recorded audio
+            delete recordedAudio[voiceNumber];
+            delete audioChunks[voiceNumber];
+            delete mediaRecorders[voiceNumber];
+            
+            // Clear timer
+            stopTimer(voiceNumber);
+            
+            // Update UI
+            updateRecordingUI(voiceNumber, 'cleared');
+            
+            // Hide preview and waveform
+            const previewDiv = document.getElementById(`preview${voiceNumber}`);
+            previewDiv.style.display = 'none';
+            previewDiv.innerHTML = '';
+            
+            const waveformDiv = document.getElementById(`waveform${voiceNumber}`);
+            waveformDiv.innerHTML = '<div class="waveform-placeholder">Waveform will appear after recording</div>';
+        }
+        
+        function generateWaveform(audioBlob, voiceNumber) {
+            const waveformDiv = document.getElementById(`waveform${voiceNumber}`);
+            
+            // Create audio context for waveform analysis
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const fileReader = new FileReader();
+            
+            fileReader.onload = function(e) {
+                audioContext.decodeAudioData(e.target.result).then(function(audioBuffer) {
+                    const channelData = audioBuffer.getChannelData(0);
+                    const samples = 50; // Number of bars in waveform
+                    const blockSize = Math.floor(channelData.length / samples);
+                    const waveform = [];
+                    
+                    // Calculate RMS (Root Mean Square) for each block
+                    for (let i = 0; i < samples; i++) {
+                        let sum = 0;
+                        for (let j = 0; j < blockSize; j++) {
+                            const sample = channelData[i * blockSize + j];
+                            sum += sample * sample;
+                        }
+                        const rms = Math.sqrt(sum / blockSize);
+                        waveform.push(rms);
+                    }
+                    
+                    // Normalize and create bars
+                    const maxValue = Math.max(...waveform);
+                    waveformDiv.innerHTML = '';
+                    
+                    waveform.forEach(value => {
+                        const bar = document.createElement('div');
+                        bar.className = 'waveform-bar';
+                        bar.style.height = `${Math.max(2, (value / maxValue) * 50)}px`;
+                        waveformDiv.appendChild(bar);
+                    });
+                }).catch(function(error) {
+                    console.error('Error decoding audio:', error);
+                    waveformDiv.innerHTML = '<div class="waveform-placeholder">Waveform generation failed</div>';
+                });
+            };
+            
+            fileReader.readAsArrayBuffer(audioBlob);
+        }
+        
+        function updateRecordingUI(voiceNumber, state) {
+            const recordBtn = document.getElementById(`recordBtn${voiceNumber}`);
+            const stopBtn = document.getElementById(`stopBtn${voiceNumber}`);
+            const clearBtn = document.getElementById(`clearBtn${voiceNumber}`);
+            const statusDiv = document.getElementById(`status${voiceNumber}`);
+            
+            switch (state) {
+                case 'recording':
+                    recordBtn.disabled = true;
+                    recordBtn.classList.add('recording');
+                    recordBtn.textContent = 'Recording...';
+                    stopBtn.disabled = false;
+                    clearBtn.disabled = true;
+                    statusDiv.className = 'recording-status recording';
+                    statusDiv.textContent = '🔴 Recording in progress...';
+                    break;
+                case 'stopped':
+                    recordBtn.disabled = false;
+                    recordBtn.classList.remove('recording');
+                    recordBtn.textContent = 'Record Voice ' + voiceNumber;
+                    stopBtn.disabled = true;
+                    clearBtn.disabled = false;
+                    statusDiv.className = 'recording-status stopped';
+                    statusDiv.textContent = '✅ Recording completed!';
+                    break;
+                case 'cleared':
+                    recordBtn.disabled = false;
+                    recordBtn.classList.remove('recording');
+                    recordBtn.textContent = 'Record Voice ' + voiceNumber;
+                    stopBtn.disabled = true;
+                    clearBtn.disabled = true;
+                    statusDiv.className = 'recording-status';
+                    statusDiv.textContent = '';
+                    break;
+            }
+        }
+        
+        function startTimer(voiceNumber) {
+            let seconds = 0;
+            recordingTimers[voiceNumber] = setInterval(() => {
+                seconds++;
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                const timerElement = document.getElementById(`timer${voiceNumber}`);
+                timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }, 1000);
+        }
+        
+        function stopTimer(voiceNumber) {
+            if (recordingTimers[voiceNumber]) {
+                clearInterval(recordingTimers[voiceNumber]);
+                delete recordingTimers[voiceNumber];
+                document.getElementById(`timer${voiceNumber}`).textContent = '';
+            }
+        }
+        
+        async function compareVoices() {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            const compareBtn = document.getElementById('compareBtn');
+            
+            // Check if both recordings are available
+            if (!recordedAudio[1] || !recordedAudio[2]) {
+                showError('Please record both voice samples before comparing');
+                return;
+            }
+            
+            const audio1 = recordedAudio[1];
+            const audio2 = recordedAudio[2];
+            
+            // Show loading state
+            compareBtn.disabled = true;
+            compareBtn.textContent = 'Processing...';
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result';
+            resultContent.innerHTML = '<div class="loading">Analyzing voice similarity...</div>';
+            
+            try {
+                const formData = new FormData();
+                formData.append('audio1', audio1);
+                formData.append('audio2', audio2);
+                
+                console.log('Sending request to API...');
+                console.log('Audio1:', audio1.name, audio1.size, 'bytes');
+                console.log('Audio2:', audio2.name, audio2.size, 'bytes');
+                
+                const response = await fetch('http://localhost:5001/compare_voices', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                console.log('Response received:', response.status, response.statusText);
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showSuccess(data);
+                } else {
+                    showError(data.error || 'An error occurred');
+                }
+            } catch (error) {
+                console.error('Error occurred:', error);
+                showError('Network error: ' + error.message);
+            } finally {
+                compareBtn.disabled = false;
+                compareBtn.textContent = 'Compare Voices';
+            }
+        }
+        
+        function showSuccess(data) {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            
+            resultDiv.className = 'result success';
+            resultDiv.style.display = 'block';
+            
+            const conclusionColor = data.is_same_person ? '#28a745' : '#dc3545';
+            
+            resultContent.innerHTML = `
+                <h3>🎯 Analysis Results</h3>
+                <div class="metric">
+                    <span class="metric-label">Similarity Score:</span>
+                    <span class="metric-value">${data.similarity_score.toFixed(4)}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Conclusion:</span>
+                    <span class="metric-value" style="color: ${conclusionColor}">${data.conclusion}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Threshold:</span>
+                    <span class="metric-value">${data.threshold}</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Processing Time:</span>
+                    <span class="metric-value">${data.execution_time_seconds} seconds</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Memory Usage:</span>
+                    <span class="metric-value">${data.memory_usage_mb} MB</span>
+                </div>
+            `;
+        }
+        
+        function showError(message) {
+            const resultDiv = document.getElementById('result');
+            const resultContent = document.getElementById('resultContent');
+            
+            resultDiv.className = 'result error';
+            resultDiv.style.display = 'block';
+            resultContent.innerHTML = `<h3>Error</h3><p>${message}</p>`;
+        }
+    </script>
+</body>
+</html>
+
