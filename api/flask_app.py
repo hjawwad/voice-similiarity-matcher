@@ -8,6 +8,8 @@ import tempfile
 import librosa
 import soundfile as sf
 import gc
+from scipy import signal
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 
@@ -18,23 +20,36 @@ CORS(app, origins=['*'], methods=['GET', 'POST'], allow_headers=['Content-Type']
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
 
-# Global variables for lazy loading
-encoder = None
-resemblyzer_loaded = False
-
-def get_encoder():
-    """Lazy load the VoiceEncoder to save memory."""
-    global encoder, resemblyzer_loaded
-    if not resemblyzer_loaded:
-        try:
-            from resemblyzer import VoiceEncoder
-            encoder = VoiceEncoder()
-            resemblyzer_loaded = True
-            print("VoiceEncoder loaded successfully")
-        except Exception as e:
-            print(f"Error loading VoiceEncoder: {e}")
-            raise Exception("Failed to load voice encoder")
-    return encoder
+def extract_audio_features(audio_data, sr=16000):
+    """Extract audio features for voice comparison."""
+    try:
+        # Extract MFCC features
+        mfccs = librosa.feature.mfcc(y=audio_data, sr=sr, n_mfcc=13)
+        
+        # Extract spectral features
+        spectral_centroids = librosa.feature.spectral_centroid(y=audio_data, sr=sr)
+        spectral_rolloff = librosa.feature.spectral_rolloff(y=audio_data, sr=sr)
+        zero_crossing_rate = librosa.feature.zero_crossing_rate(audio_data)
+        
+        # Extract chroma features
+        chroma = librosa.feature.chroma_stft(y=audio_data, sr=sr)
+        
+        # Combine all features
+        features = np.vstack([
+            mfccs,
+            spectral_centroids,
+            spectral_rolloff,
+            zero_crossing_rate,
+            chroma
+        ])
+        
+        # Take mean across time to get a single feature vector
+        feature_vector = np.mean(features, axis=1)
+        
+        return feature_vector
+        
+    except Exception as e:
+        raise Exception(f"Error extracting audio features: {str(e)}")
 
 def allowed_file(filename):
     """Check if the uploaded file has an allowed extension."""
@@ -77,12 +92,9 @@ def preprocess_audio_simple(file_path):
         raise Exception(f"Error preprocessing audio: {str(e)}")
 
 def analyze_voice_similarity(audio_file1_path, audio_file2_path):
-    """Analyze voice similarity between two audio files."""
+    """Analyze voice similarity between two audio files using audio features."""
     try:
         print(f"Processing audio files: {audio_file1_path}, {audio_file2_path}")
-        
-        # Get encoder (lazy loaded)
-        encoder = get_encoder()
         
         # Preprocess audio files
         print("Preprocessing audio file 1...")
@@ -93,29 +105,31 @@ def analyze_voice_similarity(audio_file1_path, audio_file2_path):
         wav2 = preprocess_audio_simple(audio_file2_path)
         print(f"Audio 2 shape: {wav2.shape}")
         
-        # Extract speaker embeddings
-        print("Extracting embeddings...")
-        embed1 = encoder.embed_utterance(wav1)
-        embed2 = encoder.embed_utterance(wav2)
+        # Extract audio features
+        print("Extracting audio features...")
+        features1 = extract_audio_features(wav1)
+        features2 = extract_audio_features(wav2)
         
-        # Calculate cosine similarity between embeddings
-        similarity = np.dot(embed1, embed2) / (np.linalg.norm(embed1) * np.linalg.norm(embed2))
+        # Calculate cosine similarity between feature vectors
+        similarity = cosine_similarity([features1], [features2])[0][0]
         
         # Determine if voices are from the same source
-        is_same_person = similarity >= 0.80
+        # Using a lower threshold since we're using different features
+        is_same_person = similarity >= 0.70
         result = "SAME PERSON" if is_same_person else "DIFFERENT PEOPLE"
         
         print(f"Similarity score: {similarity}")
         
         # Clean up memory
-        del wav1, wav2, embed1, embed2
+        del wav1, wav2, features1, features2
         gc.collect()
         
         return {
             'similarity_score': float(similarity),
             'is_same_person': bool(is_same_person),
             'conclusion': result,
-            'threshold': 0.80
+            'threshold': 0.70,
+            'method': 'audio_features'
         }
     except Exception as e:
         print(f"Error in analyze_voice_similarity: {str(e)}")
@@ -256,7 +270,8 @@ def home():
                 'similarity_score': 'Cosine similarity score (0-1)',
                 'is_same_person': 'Boolean indicating if same person',
                 'conclusion': 'Human readable result',
-                'threshold': 'Similarity threshold used (0.80)',
+                'threshold': 'Similarity threshold used (0.70)',
+                'method': 'Audio feature-based comparison',
                 'execution_time_seconds': 'Processing time',
                 'status': 'success/error'
             }
