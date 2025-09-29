@@ -2,14 +2,19 @@
     "$schema": "https://openapi.vercel.sh/vercel.json",
     "builds": [
         {
-            "src": "api/app.py",
+            "src": "api/flask_app.py",
             "use": "@vercel/python"
         }
     ],
     "routes": [
         {
             "src": "/(.*)",
-            "dest": "api/app.py"
+            "dest": "api/flask_app.py"
         }
-    ]
+    ],
+    "functions": {
+        "api/flask_app.py": {
+            "maxDuration": 30
+        }
+    }
 }

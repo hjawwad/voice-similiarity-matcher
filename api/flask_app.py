@@ -2,12 +2,13 @@ import os
 import time
 import psutil
 import numpy as np
-import subprocess
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from resemblyzer import VoiceEncoder, preprocess_wav
 import tempfile
+import librosa
+import soundfile as sf
 
 app = Flask(__name__)
 
@@ -15,12 +16,8 @@ app = Flask(__name__)
 CORS(app, origins=['*'], methods=['GET', 'POST'], allow_headers=['Content-Type'])
 
 # Configuration
-UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
-
-# Create upload directory if it doesn't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Initialize the VoiceEncoder
 encoder = VoiceEncoder()
@@ -31,31 +28,19 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def convert_to_wav(input_path, output_path):
-    """Convert audio file to WAV format using FFmpeg."""
+    """Convert audio file to WAV format using librosa."""
     try:
-        # Use FFmpeg to convert to WAV format
-        cmd = [
-            'ffmpeg',
-            '-i', input_path,           # Input file
-            '-acodec', 'pcm_s16le',    # PCM 16-bit little-endian
-            '-ar', '16000',            # Sample rate 16kHz
-            '-ac', '1',                
-            '-y',                     
-            output_path                
-        ]
-        
         print(f"Converting {input_path} to {output_path}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         
-        if result.returncode != 0:
-            print(f"FFmpeg error: {result.stderr}")
-            raise Exception(f"FFmpeg conversion failed: {result.stderr}")
+        # Load audio file with librosa
+        audio_data, sample_rate = librosa.load(input_path, sr=16000, mono=True)
+        
+        # Save as WAV file
+        sf.write(output_path, audio_data, sample_rate, subtype='PCM_16')
         
         print(f"Conversion successful: {output_path}")
         return output_path
         
-    except subprocess.TimeoutExpired:
-        raise Exception("Audio conversion timed out")
     except Exception as e:
         raise Exception(f"Error converting audio: {str(e)}")
 
@@ -246,6 +231,9 @@ def home():
             }
         }
     })
+
+# WSGI application for Vercel
+app = app
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001)

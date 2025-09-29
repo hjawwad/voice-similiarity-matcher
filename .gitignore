@@ -90,3 +90,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Vercel
+.vercel/
