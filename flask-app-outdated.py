@@ -1,13 +1,14 @@
 import os
 import time
+import psutil
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from resemblyzer import VoiceEncoder, preprocess_wav
 import tempfile
 import librosa
 import soundfile as sf
-import gc
 
 app = Flask(__name__)
 
@@ -18,23 +19,8 @@ CORS(app, origins=['*'], methods=['GET', 'POST'], allow_headers=['Content-Type']
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
 
-# Global variables for lazy loading
-encoder = None
-resemblyzer_loaded = False
-
-def get_encoder():
-    """Lazy load the VoiceEncoder to save memory."""
-    global encoder, resemblyzer_loaded
-    if not resemblyzer_loaded:
-        try:
-            from resemblyzer import VoiceEncoder
-            encoder = VoiceEncoder()
-            resemblyzer_loaded = True
-            print("VoiceEncoder loaded successfully")
-        except Exception as e:
-            print(f"Error loading VoiceEncoder: {e}")
-            raise Exception("Failed to load voice encoder")
-    return encoder
+# Initialize the VoiceEncoder
+encoder = VoiceEncoder()
 
 def allowed_file(filename):
     """Check if the uploaded file has an allowed extension."""
@@ -63,34 +49,18 @@ def get_audio_format(file_path):
     _, ext = os.path.splitext(file_path.lower())
     return ext[1:] if ext else 'unknown'
 
-def preprocess_audio_simple(file_path):
-    """Simple audio preprocessing using librosa."""
-    try:
-        # Load audio with librosa
-        audio, sr = librosa.load(file_path, sr=16000, mono=True)
-        
-        # Normalize audio
-        audio = audio / np.max(np.abs(audio))
-        
-        return audio
-    except Exception as e:
-        raise Exception(f"Error preprocessing audio: {str(e)}")
-
 def analyze_voice_similarity(audio_file1_path, audio_file2_path):
     """Analyze voice similarity between two audio files."""
     try:
         print(f"Processing audio files: {audio_file1_path}, {audio_file2_path}")
         
-        # Get encoder (lazy loaded)
-        encoder = get_encoder()
-        
         # Preprocess audio files
         print("Preprocessing audio file 1...")
-        wav1 = preprocess_audio_simple(audio_file1_path)
+        wav1 = preprocess_wav(audio_file1_path)
         print(f"Audio 1 shape: {wav1.shape}")
         
         print("Preprocessing audio file 2...")
-        wav2 = preprocess_audio_simple(audio_file2_path)
+        wav2 = preprocess_wav(audio_file2_path)
         print(f"Audio 2 shape: {wav2.shape}")
         
         # Extract speaker embeddings
@@ -107,10 +77,6 @@ def analyze_voice_similarity(audio_file1_path, audio_file2_path):
         
         print(f"Similarity score: {similarity}")
         
-        # Clean up memory
-        del wav1, wav2, embed1, embed2
-        gc.collect()
-        
         return {
             'similarity_score': float(similarity),
             'is_same_person': bool(is_same_person),
@@ -119,8 +85,6 @@ def analyze_voice_similarity(audio_file1_path, audio_file2_path):
         }
     except Exception as e:
         print(f"Error in analyze_voice_similarity: {str(e)}")
-        # Clean up memory on error
-        gc.collect()
         raise Exception(f"Error processing audio files: {str(e)}")
 
 @app.route('/compare_voices', methods=['POST'])
@@ -150,6 +114,10 @@ def compare_voices():
         
         # Record start time for performance metrics
         start_time = time.time()
+        
+        # Get current process information for memory usage
+        process = psutil.Process(os.getpid())
+        initial_memory = process.memory_info().rss / (1024 * 1024)  # in MB
         
         # Save uploaded files temporarily
         filename1 = secure_filename(audio1.filename)
@@ -193,17 +161,20 @@ def compare_voices():
             
             # Calculate performance metrics
             execution_time = time.time() - start_time
+            final_memory = process.memory_info().rss / (1024 * 1024)  # in MB
+            memory_usage = final_memory - initial_memory
             
             # Add performance metrics to result
             result.update({
                 'execution_time_seconds': round(execution_time, 4),
+                'memory_usage_mb': round(memory_usage, 2),
                 'status': 'success'
             })
             
             return jsonify(result)
             
         finally:
-            # Clean up temporary files and memory
+            # Clean up temporary files
             try:
                 os.unlink(temp1_path)
                 os.unlink(temp2_path)
@@ -212,9 +183,6 @@ def compare_voices():
                     os.unlink(converted_file)
             except OSError:
                 pass  # Files might already be deleted
-            
-            # Force garbage collection
-            gc.collect()
     
     except Exception as e:
         print(f"Error in compare_voices endpoint: {str(e)}")
@@ -258,6 +226,7 @@ def home():
                 'conclusion': 'Human readable result',
                 'threshold': 'Similarity threshold used (0.80)',
                 'execution_time_seconds': 'Processing time',
+                'memory_usage_mb': 'Memory used during processing',
                 'status': 'success/error'
             }
         }
