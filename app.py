@@ -146,4 +146,9 @@ with gr.Blocks(title="Voice Similarity Analyzer", theme=gr.themes.Soft()) as dem
 
 # Launch the app
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=5000,
+        allowed_paths=["*"],
+        share=False
+    )
