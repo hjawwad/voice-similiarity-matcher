@@ -93,3 +93,8 @@ dmypy.json
 
 # Vercel
 .vercel/
+
+# Replit
+.pythonlibs/
+.upm/
+.cache/
