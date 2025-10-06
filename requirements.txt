@@ -1,10 +1,9 @@
-# flask>=2.0.0
-# flask-cors>=3.0.0
-# werkzeug>=2.0.0
+# Optional Web UI
+gradio==4.44.0
 
 # Web Framework
 Flask==3.0.0
-fla==4.0.0
+flask-cors==4.0.0
 Werkzeug==3.0.3
 
 # Audio Processing
