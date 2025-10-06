@@ -2,116 +2,160 @@ import os
 import time
 import psutil
 import numpy as np
+import tempfile
+import shutil
+import subprocess
+from urllib.parse import urlparse
+
+# --- NumPy compatibility shim (for older libs like resemblyzer) ---
+# NumPy >= 1.24 removed np.bool, np.int, np.float; some libs still reference them.
+if not hasattr(np, "bool"):
+    np.bool = np.bool_  # type: ignore[attr-defined]
+if not hasattr(np, "int"):
+    np.int = int  # type: ignore[attr-defined]
+if not hasattr(np, "float"):
+    np.float = float  # type: ignore[attr-defined]
+# ------------------------------------------------------------------
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+
+# Import after the NumPy shim so resemblyzer sees the aliases
 from resemblyzer import VoiceEncoder, preprocess_wav
-import tempfile
+
+import requests
 import librosa
 import soundfile as sf
-import requests
-from urllib.parse import urlparse
+
+# Use a self-contained ffmpeg (works on Replit; no sudo needed)
+import imageio_ffmpeg
+FFMPEG_BIN = imageio_ffmpeg.get_ffmpeg_exe()  # full path to bundled ffmpeg
 
 app = Flask(__name__)
 
-# Enable CORS for all routes
-CORS(app,
-     origins=['*'],
-     methods=['GET', 'POST'],
-     allow_headers=['Content-Type'])
+# CORS
+CORS(
+    app,
+    origins=["*"],
+    methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
-# Configuration
-ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
-MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB max file size
+# Config
+ALLOWED_EXTENSIONS = {"wav", "mp3", "m4a", "flac", "ogg", "webm"}
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
-# Initialize the VoiceEncoder
+# Speaker encoder
 encoder = VoiceEncoder()
 
+def allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def allowed_file(filename):
-    """Check if the uploaded file has an allowed extension."""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+def get_audio_format(path: str) -> str:
+    _, ext = os.path.splitext(path.lower())
+    return ext[1:] if ext else "unknown"
 
-
-def convert_to_wav(input_path, output_path):
-    """Convert audio file to WAV format using librosa."""
+def is_valid_url(url: str) -> bool:
     try:
-        print(f"Converting {input_path} to {output_path}")
-
-        # Load audio file with librosa
-        audio_data, sample_rate = librosa.load(input_path, sr=16000, mono=True)
-
-        # Save as WAV file
-        sf.write(output_path, audio_data, sample_rate, subtype='PCM_16')
-
-        print(f"Conversion successful: {output_path}")
-        return output_path
-
-    except Exception as e:
-        raise Exception(f"Error converting audio: {str(e)}")
-
-
-def get_audio_format(file_path):
-    """Detect audio format from file extension."""
-    _, ext = os.path.splitext(file_path.lower())
-    return ext[1:] if ext else 'unknown'
-
-
-def download_audio_from_url(url, output_path):
-    """Download audio file from URL and save to local path."""
-    try:
-        print(f"Downloading audio from URL: {url}")
-
-        # Set headers to mimic a browser request
-        headers = {
-            'User-Agent': 'VoiceSimilarityMatcher/1.0',
-            'Accept': 'audio/*,*/*;q=0.9'
-        }
-
-        # Download the file
-        response = requests.get(url, headers=headers, timeout=30, stream=True)
-        response.raise_for_status()
-
-        # Save to temporary file
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-        print(f"Successfully downloaded audio to: {output_path}")
-        return output_path
-
-    except requests.exceptions.RequestException as e:
-        raise Exception(f"Failed to download audio from URL: {str(e)}")
-    except Exception as e:
-        raise Exception(f"Error downloading audio: {str(e)}")
-
-
-def get_filename_from_url(url):
-    """Extract filename from URL."""
-    parsed_url = urlparse(url)
-    filename = os.path.basename(parsed_url.path)
-    if not filename or '.' not in filename:
-        # Generate a default filename with extension
-        filename = f"audio_{int(time.time())}.webm"
-    return filename
-
-
-def is_valid_url(url):
-    """Check if the provided string is a valid URL."""
-    try:
-        result = urlparse(url)
-        return all([result.scheme, result.netloc])
-    except:
+        u = urlparse(url)
+        return bool(u.scheme and u.netloc)
+    except Exception:
         return False
 
+def get_filename_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    fname = os.path.basename(parsed.path)
+    if not fname or "." not in fname:
+        fname = f"audio_{int(time.time())}.webm"
+    return fname
 
-def analyze_voice_similarity(audio_file1_path, audio_file2_path):
-    """Analyze voice similarity between two audio files."""
+def download_audio_from_url(url: str, out_path: str) -> str:
     try:
-        print(
-            f"Processing audio files: {audio_file1_path}, {audio_file2_path}")
+        print(f"Downloading audio from URL: {url}")
+        headers = {
+            "User-Agent": "VoiceSimilarityMatcher/1.0",
+            "Accept": "audio/*,*/*;q=0.9",
+        }
+        with requests.get(url, headers=headers, timeout=30, stream=True) as r:
+            r.raise_for_status()
+            with open(out_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        print(f"Successfully downloaded audio to: {out_path}")
+        return out_path
+    except Exception as e:
+        raise Exception(f"Failed to download audio from URL: {e}")
 
-        # Preprocess audio files
+def convert_to_wav_ffmpeg(input_path: str, output_path: str) -> str:
+    """
+    Convert with bundled ffmpeg. Handles webm/ogg/mp3/m4a/flac reliably.
+    """
+    try:
+        if not FFMPEG_BIN or not os.path.exists(FFMPEG_BIN):
+            print("Bundled ffmpeg not found, falling back to librosa")
+            return convert_to_wav_librosa(input_path, output_path)
+
+        print(f"Converting {input_path} -> {output_path} using ffmpeg at {FFMPEG_BIN}")
+
+        cmd = [
+            FFMPEG_BIN,
+            "-hide_banner", "-loglevel", "error",
+            "-y",
+            "-i", input_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            "-acodec", "pcm_s16le",
+            output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("ffmpeg stderr:", result.stderr)
+            raise RuntimeError("ffmpeg failed")
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise RuntimeError("ffmpeg produced empty output")
+
+        print(f"ffmpeg conversion successful: {output_path}")
+        return output_path
+    except Exception as e:
+        print(f"ffmpeg conversion failed: {e}")
+        print("Falling back to librosa")
+        return convert_to_wav_librosa(input_path, output_path)
+
+def convert_to_wav_librosa(input_path: str, output_path: str) -> str:
+    """
+    Fallback via librosa/soundfile.
+    NOTE: libsndfile cannot decode webm/ogg; raise early in that case.
+    """
+    ext = os.path.splitext(input_path.lower())[1]
+    if ext in [".webm", ".ogg"]:
+        raise Exception("librosa/soundfile cannot decode WebM/Ogg without ffmpeg.")
+
+    try:
+        print(f"Converting {input_path} -> {output_path} using librosa")
+        audio_data, sample_rate = librosa.load(input_path, sr=16000, mono=True)
+        sf.write(output_path, audio_data, sample_rate, subtype="PCM_16")
+        print(f"librosa conversion successful: {output_path}")
+        return output_path
+    except Exception as e:
+        raise Exception(f"Error converting audio with librosa: {e}")
+
+def convert_to_wav(input_path: str, output_path: str) -> str:
+    """
+    Preferred path: ffmpeg; fallback: librosa (non-webm/ogg).
+    """
+    try:
+        return convert_to_wav_ffmpeg(input_path, output_path)
+    except Exception as e:
+        print(f"All conversion methods failed: {e}")
+        raise Exception(f"Error converting audio: {e}")
+
+def analyze_voice_similarity(audio_file1_path: str, audio_file2_path: str) -> dict:
+    try:
+        print(f"Processing audio files: {audio_file1_path}, {audio_file2_path}")
+
         print("Preprocessing audio file 1...")
         wav1 = preprocess_wav(audio_file1_path)
         print(f"Audio 1 shape: {wav1.shape}")
@@ -120,187 +164,144 @@ def analyze_voice_similarity(audio_file1_path, audio_file2_path):
         wav2 = preprocess_wav(audio_file2_path)
         print(f"Audio 2 shape: {wav2.shape}")
 
-        # Extract speaker embeddings
         print("Extracting embeddings...")
         embed1 = encoder.embed_utterance(wav1)
         embed2 = encoder.embed_utterance(wav2)
 
-        # Calculate cosine similarity between embeddings
-        similarity = np.dot(
-            embed1, embed2) / (np.linalg.norm(embed1) * np.linalg.norm(embed2))
+        similarity = float(
+            np.dot(embed1, embed2) / (np.linalg.norm(embed1) * np.linalg.norm(embed2))
+        )
 
-        # Determine if voices are from the same source
-        is_same_person = similarity >= 0.80
+        threshold = 0.80
+        is_same_person = similarity >= threshold
         result = "SAME PERSON" if is_same_person else "DIFFERENT PEOPLE"
 
         print(f"Similarity score: {similarity}")
 
         return {
-            'similarity_score': float(similarity),
-            'is_same_person': bool(is_same_person),
-            'conclusion': result,
-            'threshold': 0.80
+            "similarity_score": similarity,
+            "is_same_person": bool(is_same_person),
+            "conclusion": result,
+            "threshold": threshold,
         }
     except Exception as e:
-        print(f"Error in analyze_voice_similarity: {str(e)}")
-        raise Exception(f"Error processing audio files: {str(e)}")
+        print(f"Error in analyze_voice_similarity: {e}")
+        raise Exception(f"Error processing audio files: {e}")
 
-
-@app.route('/compare_voices', methods=['POST'])
+@app.route("/compare_voices", methods=["POST"])
 def compare_voices():
-    """API endpoint to compare two voice audio files from URLs."""
     try:
-        # Expect JSON data with URLs
         data = request.get_json()
+        if not data or "audio1_url" not in data or "audio2_url" not in data:
+            return jsonify({"error": "Both audio1_url and audio2_url are required in JSON request"}), 400
 
-        if not data or 'audio1_url' not in data or 'audio2_url' not in data:
-            return jsonify({
-                'error':
-                'Both audio1_url and audio2_url are required in JSON request'
-            }), 400
+        audio1_url = data["audio1_url"]
+        audio2_url = data["audio2_url"]
 
-        audio1_url = data['audio1_url']
-        audio2_url = data['audio2_url']
-
-        # Validate URLs
         if not is_valid_url(audio1_url) or not is_valid_url(audio2_url):
-            return jsonify({'error': 'Invalid URLs provided'}), 400
+            return jsonify({"error": "Invalid URLs provided"}), 400
 
-        # Extract filenames from URLs
-        filename1 = get_filename_from_url(audio1_url)
-        filename2 = get_filename_from_url(audio2_url)
+        fn1 = get_filename_from_url(audio1_url)
+        fn2 = get_filename_from_url(audio2_url)
 
-        # Check if URLs have allowed extensions
-        if not (allowed_file(filename1) and allowed_file(filename2)):
-            return jsonify({
-                'error':
-                f'Invalid file type in URLs. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'
-            }), 400
+        if not (allowed_file(fn1) and allowed_file(fn2)):
+            return jsonify({"error": f'Invalid file type in URLs. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
 
-        # Create temporary files for downloaded audio
-        with tempfile.NamedTemporaryFile(delete=False,
-                                         suffix=f'_{filename1}') as temp1:
-            temp1_path = temp1.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{fn1}") as t1:
+            temp1_path = t1.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{fn2}") as t2:
+            temp2_path = t2.name
 
-        with tempfile.NamedTemporaryFile(delete=False,
-                                         suffix=f'_{filename2}') as temp2:
-            temp2_path = temp2.name
-
-        # Download audio files from URLs
         download_audio_from_url(audio1_url, temp1_path)
         download_audio_from_url(audio2_url, temp2_path)
 
         start_time = time.time()
-
         process = psutil.Process(os.getpid())
-        initial_memory = process.memory_info().rss / (1024 * 1024)  # in MB
+        initial_mem = process.memory_info().rss / (1024 * 1024)
+
+        converted_files = []
+        final_path1 = temp1_path
+        final_path2 = temp2_path
 
         try:
-            converted_files = []
-
-            audio_format1 = get_audio_format(temp1_path)
-            if audio_format1 != 'wav':
-                wav1_path = temp1_path.replace(f'.{audio_format1}', '.wav')
+            fmt1 = get_audio_format(temp1_path)
+            if fmt1 != "wav":
+                wav1_path = temp1_path.replace(f".{fmt1}", ".wav")
                 convert_to_wav(temp1_path, wav1_path)
                 converted_files.append(wav1_path)
                 final_path1 = wav1_path
-            else:
-                final_path1 = temp1_path
 
-            # Check and convert second audio file
-            audio_format2 = get_audio_format(temp2_path)
-            if audio_format2 != 'wav':
-                wav2_path = temp2_path.replace(f'.{audio_format2}', '.wav')
+            fmt2 = get_audio_format(temp2_path)
+            if fmt2 != "wav":
+                wav2_path = temp2_path.replace(f".{fmt2}", ".wav")
                 convert_to_wav(temp2_path, wav2_path)
                 converted_files.append(wav2_path)
                 final_path2 = wav2_path
-            else:
-                final_path2 = temp2_path
 
-            # Analyze voice similarity with converted files
             result = analyze_voice_similarity(final_path1, final_path2)
 
-            # Calculate performance metrics
-            execution_time = time.time() - start_time
-            final_memory = process.memory_info().rss / (1024 * 1024)  # in MB
-            memory_usage = final_memory - initial_memory
+            exec_time = time.time() - start_time
+            final_mem = process.memory_info().rss / (1024 * 1024)
+            mem_used = final_mem - initial_mem
 
-            # Add performance metrics to result
-            result.update({
-                'execution_time_seconds': round(execution_time, 4),
-                'memory_usage_mb': round(memory_usage, 2),
-                'status': 'success'
-            })
-
+            result.update(
+                {
+                    "execution_time_seconds": round(exec_time, 4),
+                    "memory_usage_mb": round(mem_used, 2),
+                    "status": "success",
+                }
+            )
             return jsonify(result)
-
         finally:
-            # Clean up temporary files
-            try:
-                os.unlink(temp1_path)
-                os.unlink(temp2_path)
-                # Clean up converted files
-                for converted_file in converted_files:
-                    os.unlink(converted_file)
-            except OSError:
-                pass  # Files might already be deleted
+            # cleanup
+            for p in [temp1_path, temp2_path, *converted_files]:
+                try:
+                    if p and os.path.exists(p):
+                        os.unlink(p)
+                except OSError:
+                    pass
 
     except Exception as e:
-        print(f"Error in compare_voices endpoint: {str(e)}")
+        print(f"Error in compare_voices endpoint: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({'error': str(e), 'status': 'error'}), 500
+        return jsonify({"error": str(e), "status": "error"}), 500
 
-
-@app.route('/health', methods=['GET'])
+@app.route("/health", methods=["GET"])
 def health_check():
-    """Health check endpoint."""
-    return jsonify({
-        'status': 'healthy',
-        'message': 'Voice matching API is running'
-    })
+    return jsonify({"status": "healthy", "message": "Voice matching API is running"})
 
-
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 def home():
-    """Home endpoint with API documentation."""
-    return jsonify({
-        'message': 'Voice Matching API',
-        'version': '2.0',
-        'endpoints': {
-            'POST /compare_voices': 'Compare two voice audio files from URLs',
-            'GET /health': 'Health check',
-            'GET /': 'API documentation'
-        },
-        'usage': {
-            'method': 'POST',
-            'endpoint': '/compare_voices',
-            'content_type': 'application/json',
-            'parameters': {
-                'audio1_url':
-                'First audio file URL (wav, mp3, m4a, flac, ogg, webm)',
-                'audio2_url':
-                'Second audio file URL (wav, mp3, m4a, flac, ogg, webm)'
+    return jsonify(
+        {
+            "message": "Voice Matching API",
+            "version": "2.1",
+            "endpoints": {
+                "POST /compare_voices": "Compare two voice audio files from URLs",
+                "GET /health": "Health check",
+                "GET /": "API documentation",
             },
-            'example': {
-                'audio1_url': 'https://example.com/audio1.webm',
-                'audio2_url': 'https://example.com/audio2.webm'
+            "usage": {
+                "method": "POST",
+                "endpoint": "/compare_voices",
+                "content_type": "application/json",
+                "parameters": {
+                    "audio1_url": "First audio file URL (wav, mp3, m4a, flac, ogg, webm)",
+                    "audio2_url": "Second audio file URL (wav, mp3, m4a, flac, ogg, webm)",
+                },
             },
-            'response': {
-                'similarity_score': 'Cosine similarity score (0-1)',
-                'is_same_person': 'Boolean indicating if same person',
-                'conclusion': 'Human readable result',
-                'threshold': 'Similarity threshold used (0.80)',
-                'execution_time_seconds': 'Processing time',
-                'memory_usage_mb': 'Memory used during processing',
-                'status': 'success/error'
-            }
         }
-    })
+    )
 
-
-# WSGI application for Vercel
+# WSGI app for Vercel
 app = app
 
-if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    # Helpful startup logs
+    try:
+        ver = subprocess.check_output([FFMPEG_BIN, "-version"], text=True).splitlines()[0]
+        print("Using ffmpeg:", ver, "at", FFMPEG_BIN)
+    except Exception as e:
+        print("ffmpeg not available at startup:", e)
+    app.run(debug=False, host="0.0.0.0", port=5000)
