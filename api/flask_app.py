@@ -172,7 +172,7 @@ def analyze_voice_similarity(audio_file1_path: str, audio_file2_path: str) -> di
             np.dot(embed1, embed2) / (np.linalg.norm(embed1) * np.linalg.norm(embed2))
         )
 
-        threshold = 0.80
+        threshold = 0.70
         is_same_person = similarity >= threshold
         result = "SAME PERSON" if is_same_person else "DIFFERENT PEOPLE"
 
