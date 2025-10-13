@@ -4,11 +4,12 @@ import psutil
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from werkzeug.utils import secure_filename
 from resemblyzer import VoiceEncoder, preprocess_wav
 import tempfile
 import librosa
 import soundfile as sf
+import requests
+from urllib.parse import urlparse
 
 app = Flask(__name__)
 
@@ -48,6 +49,51 @@ def get_audio_format(file_path):
     """Detect audio format from file extension."""
     _, ext = os.path.splitext(file_path.lower())
     return ext[1:] if ext else 'unknown'
+
+def download_audio_from_url(url, output_path):
+    """Download audio file from URL and save to local path."""
+    try:
+        print(f"Downloading audio from URL: {url}")
+        
+        # Set headers to mimic a browser request
+        headers = {
+            'User-Agent': 'VoiceSimilarityMatcher/1.0',
+            'Accept': 'audio/*,*/*;q=0.9'
+        }
+        
+        # Download the file
+        response = requests.get(url, headers=headers, timeout=30, stream=True)
+        response.raise_for_status()
+        
+        # Save to temporary file
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        
+        print(f"Successfully downloaded audio to: {output_path}")
+        return output_path
+        
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Failed to download audio from URL: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Error downloading audio: {str(e)}")
+
+def get_filename_from_url(url):
+    """Extract filename from URL."""
+    parsed_url = urlparse(url)
+    filename = os.path.basename(parsed_url.path)
+    if not filename or '.' not in filename:
+        # Generate a default filename with extension
+        filename = f"audio_{int(time.time())}.webm"
+    return filename
+
+def is_valid_url(url):
+    """Check if the provided string is a valid URL."""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except:
+        return False
 
 def analyze_voice_similarity(audio_file1_path, audio_file2_path):
     """Analyze voice similarity between two audio files."""
@@ -89,28 +135,45 @@ def analyze_voice_similarity(audio_file1_path, audio_file2_path):
 
 @app.route('/compare_voices', methods=['POST'])
 def compare_voices():
-    """API endpoint to compare two voice audio files."""
+    """API endpoint to compare two voice audio files from URLs."""
     try:
-        # Check if both files are present in the request
-        if 'audio1' not in request.files or 'audio2' not in request.files:
+        # Expect JSON data with URLs
+        data = request.get_json()
+        
+        if not data or 'audio1_url' not in data or 'audio2_url' not in data:
             return jsonify({
-                'error': 'Both audio1 and audio2 files are required'
+                'error': 'Both audio1_url and audio2_url are required in JSON request'
             }), 400
         
-        audio1 = request.files['audio1']
-        audio2 = request.files['audio2']
+        audio1_url = data['audio1_url']
+        audio2_url = data['audio2_url']
         
-        # Check if files are selected
-        if audio1.filename == '' or audio2.filename == '':
+        # Validate URLs
+        if not is_valid_url(audio1_url) or not is_valid_url(audio2_url):
             return jsonify({
-                'error': 'No files selected'
+                'error': 'Invalid URLs provided'
             }), 400
         
-        # Check if files have allowed extensions
-        if not (allowed_file(audio1.filename) and allowed_file(audio2.filename)):
+        # Extract filenames from URLs
+        filename1 = get_filename_from_url(audio1_url)
+        filename2 = get_filename_from_url(audio2_url)
+        
+        # Check if URLs have allowed extensions
+        if not (allowed_file(filename1) and allowed_file(filename2)):
             return jsonify({
-                'error': f'Invalid file type. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'
+                'error': f'Invalid file type in URLs. Allowed types: {", ".join(ALLOWED_EXTENSIONS)}'
             }), 400
+        
+        # Create temporary files for downloaded audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'_{filename1}') as temp1:
+            temp1_path = temp1.name
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'_{filename2}') as temp2:
+            temp2_path = temp2.name
+        
+        # Download audio files from URLs
+        download_audio_from_url(audio1_url, temp1_path)
+        download_audio_from_url(audio2_url, temp2_path)
         
         # Record start time for performance metrics
         start_time = time.time()
@@ -118,19 +181,6 @@ def compare_voices():
         # Get current process information for memory usage
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / (1024 * 1024)  # in MB
-        
-        # Save uploaded files temporarily
-        filename1 = secure_filename(audio1.filename)
-        filename2 = secure_filename(audio2.filename)
-        
-        # Use temporary files for processing
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'_{filename1}') as temp1:
-            audio1.save(temp1.name)
-            temp1_path = temp1.name
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f'_{filename2}') as temp2:
-            audio2.save(temp2.name)
-            temp2_path = temp2.name
         
         try:
             # Convert audio files to WAV if needed
@@ -206,19 +256,23 @@ def home():
     """Home endpoint with API documentation."""
     return jsonify({
         'message': 'Voice Matching API',
-        'version': '1.0',
+        'version': '2.0',
         'endpoints': {
-            'POST /compare_voices': 'Compare two voice audio files',
+            'POST /compare_voices': 'Compare two voice audio files from URLs',
             'GET /health': 'Health check',
             'GET /': 'API documentation'
         },
         'usage': {
             'method': 'POST',
             'endpoint': '/compare_voices',
-            'content_type': 'multipart/form-data',
+            'content_type': 'application/json',
             'parameters': {
-                'audio1': 'First audio file (wav, mp3, m4a, flac, ogg)',
-                'audio2': 'Second audio file (wav, mp3, m4a, flac, ogg)'
+                'audio1_url': 'First audio file URL (wav, mp3, m4a, flac, ogg, webm)',
+                'audio2_url': 'Second audio file URL (wav, mp3, m4a, flac, ogg, webm)'
+            },
+            'example': {
+                'audio1_url': 'https://example.com/audio1.webm',
+                'audio2_url': 'https://example.com/audio2.webm'
             },
             'response': {
                 'similarity_score': 'Cosine similarity score (0-1)',
@@ -236,5 +290,5 @@ def home():
 app = app
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5003)
 

@@ -202,8 +202,22 @@
         <h1>🎤 Voice Matching API Test</h1>
         
         <div class="recording-section">
-            <h3>🎙️ Record Voice Samples</h3>
-            <p>Record two voice samples directly in your browser for comparison:</p>
+            <h3>🎙️ Voice Comparison Options</h3>
+            <p>Choose how to provide voice samples for comparison:</p>
+            
+            <div style="margin-bottom: 20px;">
+                <label>
+                    <input type="radio" name="inputMethod" value="record" checked onchange="toggleInputMethod()">
+                    Record Voice Samples
+                </label>
+                <label style="margin-left: 20px;">
+                    <input type="radio" name="inputMethod" value="url" onchange="toggleInputMethod()">
+                    Use Audio URLs
+                </label>
+            </div>
+            
+            <div id="recordingInterface">
+                <p>Record two voice samples directly in your browser for comparison:</p>
             
             <div class="recording-controls">
                 <button id="recordBtn1" class="record-btn" onclick="startRecording(1)">Record Voice 1</button>
@@ -228,6 +242,34 @@
                 <div class="waveform-placeholder">Waveform will appear after recording</div>
             </div>
             <div id="preview2" class="audio-preview"></div>
+            </div>
+            
+            <div id="urlInterface" style="display: none;">
+                <p>Enter URLs of audio files to compare:</p>
+                
+                <div style="margin-bottom: 15px;">
+                    <label for="url1" style="display: block; margin-bottom: 5px; font-weight: bold;">Audio URL 1:</label>
+                    <input type="url" id="url1" placeholder="https://example.com/audio1.webm" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <div id="url1Status" style="margin-top: 5px; font-size: 12px;"></div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <label for="url2" style="display: block; margin-bottom: 5px; font-weight: bold;">Audio URL 2:</label>
+                    <input type="url" id="url2" placeholder="https://example.com/audio2.webm" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <div id="url2Status" style="margin-top: 5px; font-size: 12px;"></div>
+                </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <button onclick="loadPresetUrls()" style="background-color: #28a745; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">Load Preset URLs</button>
+                    <button onclick="validateUrls()" style="background-color: #17a2b8; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer;">Validate URLs</button>
+                </div>
+                
+                <div id="urlPreview" style="display: none;">
+                    <h4>Audio Previews:</h4>
+                    <div id="urlPreview1" style="margin-bottom: 10px;"></div>
+                    <div id="urlPreview2"></div>
+                </div>
+            </div>
         </div>
         
         
@@ -244,6 +286,13 @@
         let audioChunks = {};
         let recordingTimers = {};
         let recordedAudio = {};
+        
+        // URL state management
+        let urlAudioFiles = {};
+        const PRESET_URLS = {
+            url1: "https://ctyiaeooibgwwekfegrx.supabase.co/storage/v1/object/public/audio-files/-x6wXRdtVSlrylaAMvoeO-q0-1758175446483.webm",
+            url2: "https://ctyiaeooibgwwekfegrx.supabase.co/storage/v1/object/public/audio-files/-x6wXRdtVSlrylaAMvoeO-q4-1758176134437.webm"
+        };
         
         // Initialize recording functionality
         document.addEventListener('DOMContentLoaded', function() {
@@ -442,17 +491,53 @@
             const resultDiv = document.getElementById('result');
             const resultContent = document.getElementById('resultContent');
             const compareBtn = document.getElementById('compareBtn');
+            const inputMethod = document.querySelector('input[name="inputMethod"]:checked').value;
             
-            // Check if both recordings are available
-            if (!recordedAudio[1] || !recordedAudio[2]) {
-                showError('Please record both voice samples before comparing');
-                return;
+            let audio1, audio2;
+            
+            // Check input method and validate inputs
+            if (inputMethod === 'record') {
+                // Check if both recordings are available
+                if (!recordedAudio[1] || !recordedAudio[2]) {
+                    showError('Please record both voice samples before comparing');
+                    return;
+                }
+                audio1 = recordedAudio[1];
+                audio2 = recordedAudio[2];
+            } else {
+                // Check if both URLs are provided
+                const url1 = document.getElementById('url1').value;
+                const url2 = document.getElementById('url2').value;
+                
+                if (!url1 || !url2) {
+                    showError('Please provide both audio URLs before comparing');
+                    return;
+                }
+                
+                if (!isValidAudioUrl(url1) || !isValidAudioUrl(url2)) {
+                    showError('Please provide valid audio URLs');
+                    return;
+                }
+                
+                // Show loading state for URL download
+                compareBtn.disabled = true;
+                compareBtn.textContent = 'Downloading audio files...';
+                resultDiv.style.display = 'block';
+                resultDiv.className = 'result';
+                resultContent.innerHTML = '<div class="loading">Downloading audio files from URLs...</div>';
+                
+                try {
+                    audio1 = await downloadAudioFromUrl(url1);
+                    audio2 = await downloadAudioFromUrl(url2);
+                } catch (error) {
+                    showError('Failed to download audio files: ' + error.message);
+                    compareBtn.disabled = false;
+                    compareBtn.textContent = 'Compare Voices';
+                    return;
+                }
             }
             
-            const audio1 = recordedAudio[1];
-            const audio2 = recordedAudio[2];
-            
-            // Show loading state
+            // Show loading state for comparison
             compareBtn.disabled = true;
             compareBtn.textContent = 'Processing...';
             resultDiv.style.display = 'block';
@@ -468,7 +553,7 @@
                 console.log('Audio1:', audio1.name, audio1.size, 'bytes');
                 console.log('Audio2:', audio2.name, audio2.size, 'bytes');
                 
-                const response = await fetch('http://localhost:5001/compare_voices', {
+                const response = await fetch('http://localhost:5003/compare_voices', {
                     method: 'POST',
                     body: formData
                 });
@@ -532,6 +617,111 @@
             resultDiv.className = 'result error';
             resultDiv.style.display = 'block';
             resultContent.innerHTML = `<h3>Error</h3><p>${message}</p>`;
+        }
+        
+        // URL-based comparison functions
+        function toggleInputMethod() {
+            const recordingInterface = document.getElementById('recordingInterface');
+            const urlInterface = document.getElementById('urlInterface');
+            const inputMethod = document.querySelector('input[name="inputMethod"]:checked').value;
+            
+            if (inputMethod === 'record') {
+                recordingInterface.style.display = 'block';
+                urlInterface.style.display = 'none';
+            } else {
+                recordingInterface.style.display = 'none';
+                urlInterface.style.display = 'block';
+            }
+        }
+        
+        function loadPresetUrls() {
+            document.getElementById('url1').value = PRESET_URLS.url1;
+            document.getElementById('url2').value = PRESET_URLS.url2;
+            validateUrls();
+        }
+        
+        function validateUrls() {
+            const url1 = document.getElementById('url1').value;
+            const url2 = document.getElementById('url2').value;
+            const status1 = document.getElementById('url1Status');
+            const status2 = document.getElementById('url2Status');
+            
+            // Validate URL 1
+            if (url1) {
+                if (isValidAudioUrl(url1)) {
+                    status1.innerHTML = '<span style="color: green;">✓ Valid audio URL</span>';
+                    loadAudioPreview(url1, 1);
+                } else {
+                    status1.innerHTML = '<span style="color: red;">✗ Invalid URL or unsupported format</span>';
+                }
+            } else {
+                status1.innerHTML = '';
+            }
+            
+            // Validate URL 2
+            if (url2) {
+                if (isValidAudioUrl(url2)) {
+                    status2.innerHTML = '<span style="color: green;">✓ Valid audio URL</span>';
+                    loadAudioPreview(url2, 2);
+                } else {
+                    status2.innerHTML = '<span style="color: red;">✗ Invalid URL or unsupported format</span>';
+                }
+            } else {
+                status2.innerHTML = '';
+            }
+        }
+        
+        function isValidAudioUrl(url) {
+            try {
+                const urlObj = new URL(url);
+                const supportedFormats = ['wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'];
+                const pathname = urlObj.pathname.toLowerCase();
+                const extension = pathname.split('.').pop();
+                return supportedFormats.includes(extension);
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        function loadAudioPreview(url, audioNumber) {
+            const previewDiv = document.getElementById(`urlPreview${audioNumber}`);
+            previewDiv.innerHTML = `
+                <div style="margin-bottom: 10px;">
+                    <strong>Audio ${audioNumber}:</strong>
+                    <audio controls style="width: 100%; margin-top: 5px;">
+                        <source src="${url}" type="audio/webm">
+                        Your browser does not support the audio element.
+                    </audio>
+                </div>
+            `;
+            
+            // Show preview section
+            document.getElementById('urlPreview').style.display = 'block';
+            
+            // Store the URL for comparison
+            urlAudioFiles[audioNumber] = url;
+        }
+        
+        async function downloadAudioFromUrl(url) {
+            try {
+                console.log(`Downloading audio from: ${url}`);
+                
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const audioBlob = await response.blob();
+                const filename = url.split('/').pop() || 'audio.webm';
+                const audioFile = new File([audioBlob], filename, { type: audioBlob.type });
+                
+                console.log(`Downloaded audio file: ${filename}, size: ${audioBlob.size} bytes`);
+                return audioFile;
+                
+            } catch (error) {
+                console.error('Error downloading audio:', error);
+                throw new Error(`Failed to download audio from URL: ${error.message}`);
+            }
         }
     </script>
 </body>
